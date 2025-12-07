@@ -1,6 +1,6 @@
 import ReactMarkdown from "react-markdown";
 import { cn } from "@/lib/utils";
-import { User, Bot } from "lucide-react";
+import { User, Bot, Download } from "lucide-react";
 
 interface MessageBubbleProps {
   role: "user" | "assistant";
@@ -10,6 +10,56 @@ interface MessageBubbleProps {
 
 export function MessageBubble({ role, content, images }: MessageBubbleProps) {
   const isUser = role === "user";
+
+  const handleDownloadImage = async (url: string, index: number) => {
+    try {
+      let blob: Blob;
+      let filename = `imagen-${index + 1}.png`;
+      
+      // Handle different URL types
+      if (url.startsWith("data:image")) {
+        // Base64 data URL
+        const response = await fetch(url);
+        blob = await response.blob();
+        const mimeType = url.split(";")[0].split(":")[1];
+        const extension = mimeType.split("/")[1] || "png";
+        filename = `imagen-${index + 1}.${extension}`;
+      } else if (url.startsWith("blob:")) {
+        // Blob URL
+        const response = await fetch(url);
+        blob = await response.blob();
+        const extension = blob.type.split("/")[1] || "png";
+        filename = `imagen-${index + 1}.${extension}`;
+      } else {
+        // External URL
+        const response = await fetch(url);
+        blob = await response.blob();
+        const contentType = response.headers.get("content-type");
+        if (contentType) {
+          const extension = contentType.split("/")[1] || "png";
+          filename = `imagen-${index + 1}.${extension}`;
+        }
+      }
+      
+      // Create a temporary URL for the blob
+      const blobUrl = URL.createObjectURL(blob);
+      
+      // Create a temporary anchor element to trigger download
+      const link = document.createElement("a");
+      link.href = blobUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      
+      // Cleanup
+      document.body.removeChild(link);
+      URL.revokeObjectURL(blobUrl);
+    } catch (error) {
+      console.error("Error al descargar la imagen:", error);
+      // Fallback: try to open in new tab
+      window.open(url, "_blank");
+    }
+  };
 
   return (
     <div
@@ -42,12 +92,21 @@ export function MessageBubble({ role, content, images }: MessageBubbleProps) {
         {images && images.length > 0 && (
           <div className="flex flex-wrap gap-2 mb-3">
             {images.map((url, idx) => (
-              <img
-                key={idx}
-                src={url}
-                alt={`Imagen ${idx + 1}`}
-                className="max-w-[200px] max-h-[200px] rounded-lg object-cover"
-              />
+              <div key={idx} className="relative group">
+                <img
+                  src={url}
+                  alt={`Imagen ${idx + 1}`}
+                  className="max-w-[200px] max-h-[200px] rounded-lg object-cover"
+                />
+                <button
+                  onClick={() => handleDownloadImage(url, idx)}
+                  className="absolute bottom-2 right-2 bg-primary text-primary-foreground p-2 rounded-full shadow-lg hover:bg-primary/90 transition-colors opacity-0 group-hover:opacity-100"
+                  title="Descargar imagen"
+                  aria-label="Descargar imagen"
+                >
+                  <Download className="h-4 w-4" />
+                </button>
+              </div>
             ))}
           </div>
         )}

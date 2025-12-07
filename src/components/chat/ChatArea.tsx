@@ -1,9 +1,9 @@
-import { useEffect, useRef } from "react";
+import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Bot, Sparkles } from "lucide-react";
+import { useEffect, useRef } from "react";
 import { MessageBubble } from "./MessageBubble";
 import { TypingIndicator } from "./TypingIndicator";
-import { Bot, Sparkles } from "lucide-react";
-import { Button } from "@/components/ui/button";
 
 interface Message {
   id: string;
@@ -52,7 +52,7 @@ export function ChatArea({ messages, isLoading, streamingContent, onStartBrandin
                 <h3 className="font-semibold">Asistente de Branding</h3>
               </div>
               <p className="text-sm text-muted-foreground mb-4">
-                Inicia un flujo guiado de 24 preguntas para crear el perfil completo de tu marca.
+                Inicia un flujo guiado de 4 preguntas esenciales para crear el perfil de tu marca.
               </p>
               <Button
                 onClick={onStartBranding}
