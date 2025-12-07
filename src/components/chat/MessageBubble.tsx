@@ -1,6 +1,6 @@
 import ReactMarkdown from "react-markdown";
 import { cn } from "@/lib/utils";
-import { User, Bot, Download } from "lucide-react";
+import { User, Bot, Download, Loader2 } from "lucide-react";
 
 interface MessageBubbleProps {
   role: "user" | "assistant";
@@ -111,49 +111,56 @@ export function MessageBubble({ role, content, images }: MessageBubbleProps) {
           </div>
         )}
         
-        <div className="prose prose-invert prose-sm max-w-none">
-          <ReactMarkdown
-            components={{
-              p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
-              code: ({ children, className }) => {
-                const isInline = !className;
-                return isInline ? (
-                  <code className="bg-muted px-1.5 py-0.5 rounded text-sm font-mono">
+        {content === "Creando publicación en MercadoLibre..." ? (
+          <div className="flex items-center gap-2">
+            <Loader2 className="h-4 w-4 animate-spin text-primary" />
+            <span>{content}</span>
+          </div>
+        ) : (
+          <div className="prose prose-invert prose-sm max-w-none">
+            <ReactMarkdown
+              components={{
+                p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+                code: ({ children, className }) => {
+                  const isInline = !className;
+                  return isInline ? (
+                    <code className="bg-muted px-1.5 py-0.5 rounded text-sm font-mono">
+                      {children}
+                    </code>
+                  ) : (
+                    <code className="block bg-muted p-3 rounded-lg text-sm font-mono overflow-x-auto">
+                      {children}
+                    </code>
+                  );
+                },
+                pre: ({ children }) => (
+                  <pre className="bg-muted rounded-lg overflow-hidden my-2">
                     {children}
-                  </code>
-                ) : (
-                  <code className="block bg-muted p-3 rounded-lg text-sm font-mono overflow-x-auto">
+                  </pre>
+                ),
+                ul: ({ children }) => (
+                  <ul className="list-disc pl-4 mb-2">{children}</ul>
+                ),
+                ol: ({ children }) => (
+                  <ol className="list-decimal pl-4 mb-2">{children}</ol>
+                ),
+                li: ({ children }) => <li className="mb-1">{children}</li>,
+                a: ({ href, children }) => (
+                  <a
+                    href={href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-primary hover:underline"
+                  >
                     {children}
-                  </code>
-                );
-              },
-              pre: ({ children }) => (
-                <pre className="bg-muted rounded-lg overflow-hidden my-2">
-                  {children}
-                </pre>
-              ),
-              ul: ({ children }) => (
-                <ul className="list-disc pl-4 mb-2">{children}</ul>
-              ),
-              ol: ({ children }) => (
-                <ol className="list-decimal pl-4 mb-2">{children}</ol>
-              ),
-              li: ({ children }) => <li className="mb-1">{children}</li>,
-              a: ({ href, children }) => (
-                <a
-                  href={href}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-primary hover:underline"
-                >
-                  {children}
-                </a>
-              ),
-            }}
-          >
-            {content}
-          </ReactMarkdown>
-        </div>
+                  </a>
+                ),
+              }}
+            >
+              {content}
+            </ReactMarkdown>
+          </div>
+        )}
       </div>
     </div>
   );
