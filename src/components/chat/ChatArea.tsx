@@ -2,7 +2,8 @@ import { useEffect, useRef } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { MessageBubble } from "./MessageBubble";
 import { TypingIndicator } from "./TypingIndicator";
-import { Bot } from "lucide-react";
+import { Bot, Sparkles } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 interface Message {
   id: string;
@@ -15,16 +16,20 @@ interface ChatAreaProps {
   messages: Message[];
   isLoading: boolean;
   streamingContent: string;
+  onStartBranding?: () => void;
 }
 
-export function ChatArea({ messages, isLoading, streamingContent }: ChatAreaProps) {
+export function ChatArea({ messages, isLoading, streamingContent, onStartBranding }: ChatAreaProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
 
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [messages, streamingContent]);
+    scrollToBottom();
+  }, [messages, streamingContent, isLoading]);
 
   if (messages.length === 0 && !isLoading) {
     return (
@@ -36,9 +41,29 @@ export function ChatArea({ messages, isLoading, streamingContent }: ChatAreaProp
           <h2 className="text-2xl font-bold text-foreground mb-2">
             ¿En qué puedo ayudarte?
           </h2>
-          <p className="text-muted-foreground">
+          <p className="text-muted-foreground mb-6">
             Escribe un mensaje o sube una imagen para comenzar una conversación con la IA.
           </p>
+          
+          {onStartBranding && (
+            <div className="mt-8 p-4 border border-border rounded-lg bg-card">
+              <div className="flex items-center justify-center gap-2 mb-3">
+                <Sparkles className="w-5 h-5 text-primary" />
+                <h3 className="font-semibold">Asistente de Branding</h3>
+              </div>
+              <p className="text-sm text-muted-foreground mb-4">
+                Inicia un flujo guiado de 24 preguntas para crear el perfil completo de tu marca.
+              </p>
+              <Button
+                onClick={onStartBranding}
+                className="w-full"
+                variant="default"
+              >
+                <Sparkles className="w-4 h-4 mr-2" />
+                Iniciar Cuestionario de Branding
+              </Button>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -66,6 +91,8 @@ export function ChatArea({ messages, isLoading, streamingContent }: ChatAreaProp
         {isLoading && !streamingContent && (
           <TypingIndicator />
         )}
+        
+        <div ref={messagesEndRef} />
       </div>
     </ScrollArea>
   );

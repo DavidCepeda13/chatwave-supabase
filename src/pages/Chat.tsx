@@ -5,17 +5,6 @@ import { ChatSidebar } from "@/components/chat/ChatSidebar";
 import { ChatArea } from "@/components/chat/ChatArea";
 import { ChatInput } from "@/components/chat/ChatInput";
 import { useToast } from "@/hooks/use-toast";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Loader2 } from "lucide-react";
 
 interface Chat {
@@ -31,6 +20,19 @@ interface Message {
   images?: string[];
 }
 
+interface BrandingData {
+  nombre_marca?: string;
+  oferta_valor?: string;
+  perfil_cliente?: string;
+  valores_marca?: string;
+  personalidad_marca?: string;
+  tono_voz?: string;
+  colores_identidad?: string;
+  estilo_visual?: string;
+  objetivo_principal?: string;
+  diferenciador?: string;
+}
+
 export default function Chat() {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -40,9 +42,25 @@ export default function Chat() {
   const [isLoading, setIsLoading] = useState(false);
   const [streamingContent, setStreamingContent] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [showShopifyDialog, setShowShopifyDialog] = useState(false);
-  const [shopifyUrl, setShopifyUrl] = useState("");
   const [isCreatingChat, setIsCreatingChat] = useState(false);
+  const [isBrandingMode, setIsBrandingMode] = useState(false);
+  const [brandingData, setBrandingData] = useState<BrandingData>({});
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  const [brandingComplete, setBrandingComplete] = useState(false);
+
+  // Define essential branding questions (reduced to 10 core questions)
+  const brandingQuestions = [
+    { key: "nombre_marca", question: "¿Cómo se llama tu marca?", path: ["nombre_marca"] },
+    { key: "oferta_valor", question: "¿Qué problema resuelves o qué beneficio ofreces a tus clientes?", path: ["oferta_valor"] },
+    { key: "perfil_cliente", question: "Describe a tu cliente ideal (edad, intereses, necesidades principales).", path: ["perfil_cliente"] },
+    { key: "valores_marca", question: "¿Cuáles son los 3 valores fundamentales de tu marca?", path: ["valores_marca"] },
+    { key: "personalidad_marca", question: "Si tu marca fuera una persona, ¿cómo sería? (formal/casual, tradicional/moderna, divertida/seria)", path: ["personalidad_marca"] },
+    { key: "tono_voz", question: "¿Qué tono de comunicación prefieres? (profesional, amigable, inspirador, técnico)", path: ["tono_voz"] },
+    { key: "colores_identidad", question: "¿Qué colores representan mejor tu marca? (máximo 3)", path: ["colores_identidad"] },
+    { key: "estilo_visual", question: "¿Qué estilo visual prefieres? (minimalista, moderno, clásico, audaz)", path: ["estilo_visual"] },
+    { key: "objetivo_principal", question: "¿Cuál es tu objetivo principal con esta marca? (ventas, reconocimiento, comunidad, educar)", path: ["objetivo_principal"] },
+    { key: "diferenciador", question: "¿Qué hace única a tu marca? ¿Por qué deberían elegirte?", path: ["diferenciador"] }
+  ];
 
   // Fetch chats
   const fetchChats = useCallback(async () => {
@@ -114,59 +132,64 @@ export default function Chat() {
     fetchMessages();
   }, [fetchMessages]);
 
-  // Create new chat - show Shopify dialog first
-  const handleNewChat = () => {
-    setShopifyUrl("");
-    setShowShopifyDialog(true);
-  };
+  // Start branding questionnaire
+  const startBrandingQuestionnaire = async () => {
+    if (!activeChat) return;
+    
+    setIsBrandingMode(true);
+    setCurrentQuestionIndex(0);
+    setBrandingData({});
+    setBrandingComplete(false);
+    setIsLoading(true);
 
-  // Handle Shopify URL submission
-  const handleShopifySubmit = async () => {
-    if (!shopifyUrl.trim()) {
+    try {
+      const firstQuestion = brandingQuestions[0];
+      
+      // Save assistant's first question
+      const { data: assistantMsg, error } = await supabase
+        .from("messages")
+        .insert({
+          chat_id: activeChat,
+          user_id: user!.id,
+          role: "assistant",
+          content: `**Cuestionario de Branding** (Pregunta 1 de ${brandingQuestions.length})\n\n${firstQuestion.question}`,
+        })
+        .select()
+        .single();
+
+      if (!error && assistantMsg) {
+        setMessages([{ 
+          id: assistantMsg.id, 
+          role: "assistant", 
+          content: `**Cuestionario de Branding** (Pregunta 1 de ${brandingQuestions.length})\n\n${firstQuestion.question}`
+        }]);
+      }
+    } catch (error) {
+      console.error("Error starting questionnaire:", error);
       toast({
         title: "Error",
-        description: "Por favor ingresa el link de la tienda de Shopify",
+        description: "No se pudo iniciar el cuestionario",
         variant: "destructive",
       });
-      return;
+      setIsBrandingMode(false);
+    } finally {
+      setIsLoading(false);
     }
+  };
 
+  // Create new chat
+  const handleNewChat = async () => {
     if (!user) return;
 
     setIsCreatingChat(true);
-    setShowShopifyDialog(false);
 
     try {
-      // Send Shopify URL to n8n
-      const n8nWebhookUrl = import.meta.env.VITE_N8N_WEBHOOK_URL;
-      
-      if (n8nWebhookUrl) {
-        try {
-          await fetch(n8nWebhookUrl, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              shopify_url: shopifyUrl.trim(),
-              action: "setup_chat",
-            }),
-          });
-        } catch (error) {
-          console.error("Error sending Shopify URL to n8n:", error);
-          // Continue even if n8n call fails
-        }
-      }
-
-      // Sleep/delay
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-
       // Create the chat
       const { data, error } = await supabase
         .from("chats")
         .insert({ 
           user_id: user.id, 
-          title: shopifyUrl.trim() || "Nuevo chat" 
+          title: "Nuevo chat" 
         })
         .select()
         .single();
@@ -193,7 +216,6 @@ export default function Chat() {
       });
     } finally {
       setIsCreatingChat(false);
-      setShopifyUrl("");
     }
   };
 
@@ -331,8 +353,156 @@ export default function Chat() {
         );
       }
 
-      // Call n8n webhook
-      const n8nWebhookUrl = import.meta.env.VITE_N8N_WEBHOOK_URL;
+      // Check if we're in branding mode
+      if (isBrandingMode && !brandingComplete) {
+        await handleBrandingResponse(chatId, content);
+      } else {
+        // Regular n8n chat flow
+        await handleRegularChat(chatId, content, images);
+      }
+    } catch (error) {
+      console.error("Error sending message:", error);
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Error al enviar mensaje",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Handle branding questionnaire response
+  const handleBrandingResponse = async (chatId: string, userResponse: string) => {
+    try {
+      // Save user's answer to branding data
+      const currentQuestion = brandingQuestions[currentQuestionIndex];
+      const newData = { ...brandingData };
+      
+      // Set nested properties
+      let target: any = newData;
+      for (let i = 0; i < currentQuestion.path.length - 1; i++) {
+        const key = currentQuestion.path[i];
+        if (!target[key]) target[key] = {};
+        target = target[key];
+      }
+      
+      const finalKey = currentQuestion.path[currentQuestion.path.length - 1];
+      // No conversion needed - all answers are now text-based
+      target[finalKey] = userResponse;
+      
+      setBrandingData(newData);
+
+      // Check if we're done
+      const nextIndex = currentQuestionIndex + 1;
+      
+      if (nextIndex >= brandingQuestions.length) {
+        // Questionnaire complete!
+        setBrandingComplete(true);
+        setIsBrandingMode(false);
+        
+        const completionMessage = `**¡Cuestionario Completado!**
+
+Has completado exitosamente el perfil de branding de tu marca. Aquí está tu resumen:
+
+---
+
+### **${newData.nombre_marca || 'Tu Marca'}**
+
+**Oferta de Valor:**
+${newData.oferta_valor || 'No especificada'}
+
+**Cliente Ideal:**
+${newData.perfil_cliente || 'No especificado'}
+
+**Valores Fundamentales:**
+${newData.valores_marca || 'No especificados'}
+
+**Personalidad de Marca:**
+${newData.personalidad_marca || 'No especificada'}
+
+**Tono de Voz:**
+${newData.tono_voz || 'No especificado'}
+
+**Colores de Identidad:**
+${newData.colores_identidad || 'No especificados'}
+
+**Estilo Visual:**
+${newData.estilo_visual || 'No especificado'}
+
+**Objetivo Principal:**
+${newData.objetivo_principal || 'No especificado'}
+
+**Diferenciador Único:**
+${newData.diferenciador || 'No especificado'}
+
+---
+
+**ID de Chat:** \`${chatId}\`
+
+Puedes usar esta información para desarrollar tu identidad de marca, crear contenido y comunicarte consistentemente con tu audiencia.`;
+        
+        // Save completion message
+        const { data: assistantMsg, error } = await supabase
+          .from("messages")
+          .insert({
+            chat_id: chatId,
+            user_id: user!.id,
+            role: "assistant",
+            content: completionMessage,
+          })
+          .select()
+          .single();
+
+        if (!error && assistantMsg) {
+          setMessages((prev) => [
+            ...prev,
+            { id: assistantMsg.id, role: "assistant", content: completionMessage },
+          ]);
+        }
+
+        toast({
+          title: "¡Completado!",
+          description: "Se ha recopilado toda la información de branding",
+        });
+      } else {
+        // Ask next question
+        setCurrentQuestionIndex(nextIndex);
+        const nextQuestion = brandingQuestions[nextIndex];
+        
+        const questionMessage = `**Cuestionario de Branding** (Pregunta ${nextIndex + 1} de ${brandingQuestions.length})\n\n${nextQuestion.question}`;
+        
+        const { data: assistantMsg, error } = await supabase
+          .from("messages")
+          .insert({
+            chat_id: chatId,
+            user_id: user!.id,
+            role: "assistant",
+            content: questionMessage,
+          })
+          .select()
+          .single();
+
+        if (!error && assistantMsg) {
+          setMessages((prev) => [
+            ...prev,
+            { id: assistantMsg.id, role: "assistant", content: questionMessage },
+          ]);
+        }
+      }
+    } catch (error) {
+      console.error("Error in branding questionnaire:", error);
+      throw error;
+    }
+  };
+
+  // Handle regular chat (existing functionality)
+  const handleRegularChat = async (chatId: string, content: string, images: File[]) => {
+    try {
+      // Use proxy in development to avoid CORS
+      const n8nWebhookUrl = import.meta.env.DEV 
+        ? "/api/chat" 
+        : import.meta.env.VITE_N8N_WEBHOOK_URL;
       
       if (!n8nWebhookUrl) {
         throw new Error("VITE_N8N_WEBHOOK_URL no está configurada en las variables de entorno");
@@ -502,75 +672,18 @@ export default function Chat() {
         .eq("id", chatId);
 
     } catch (error) {
-      console.error("Error sending message:", error);
-      toast({
-        title: "Error",
-        description: error instanceof Error ? error.message : "Error al enviar mensaje",
-        variant: "destructive",
-      });
-    } finally {
-      setIsLoading(false);
+      console.error("Error in regular chat:", error);
+      throw error;
     }
   };
 
   return (
     <>
-      <Dialog open={showShopifyDialog} onOpenChange={setShowShopifyDialog}>
-        <DialogContent className="sm:max-w-[425px]">
-          <DialogHeader>
-            <DialogTitle>Nueva Tienda de Shopify</DialogTitle>
-            <DialogDescription>
-              Ingresa el link de la tienda de Shopify para comenzar un nuevo chat.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-4 py-4">
-            <div className="grid gap-2">
-              <Label htmlFor="shopify-url">Link de la tienda</Label>
-              <Input
-                id="shopify-url"
-                placeholder="https://tu-tienda.myshopify.com"
-                value={shopifyUrl}
-                onChange={(e) => setShopifyUrl(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    handleShopifySubmit();
-                  }
-                }}
-                disabled={isCreatingChat}
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setShowShopifyDialog(false)}
-              disabled={isCreatingChat}
-            >
-              Cancelar
-            </Button>
-            <Button
-              onClick={handleShopifySubmit}
-              disabled={isCreatingChat || !shopifyUrl.trim()}
-            >
-              {isCreatingChat ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Creando...
-                </>
-              ) : (
-                "Crear chat"
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
       {isCreatingChat && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm">
           <div className="flex flex-col items-center gap-4">
             <Loader2 className="h-8 w-8 animate-spin text-primary" />
-            <p className="text-muted-foreground">Configurando tu tienda...</p>
+            <p className="text-muted-foreground">Creando chat...</p>
           </div>
         </div>
       )}
@@ -594,6 +707,10 @@ export default function Chat() {
             messages={messages}
             isLoading={isLoading}
             streamingContent={streamingContent}
+            onStartBranding={messages.length === 0 && !brandingComplete ? () => {
+              setIsBrandingMode(true);
+              startBrandingQuestionnaire();
+            } : undefined}
           />
           <ChatInput
             onSend={handleSend}
