@@ -47,7 +47,12 @@ This project requires environment variables to be set. See [ENV_SETUP.md](./ENV_
 **Required variables:**
 - `VITE_SUPABASE_URL` - Your Supabase project URL
 - `VITE_SUPABASE_PUBLISHABLE_KEY` - Your Supabase anon key
-- `VITE_N8N_WEBHOOK_URL` - Your n8n webhook URL for chat processing
+- `VITE_N8N_WEBHOOK_URL` - Your n8n webhook URL for chat processing (before logo generation)
+- `VITE_LOGO_GENERATOR_WEBHOOK_URL` - Your logo generator webhook URL (generates logo after branding questionnaire completion)
+- `VITE_N8N_WEBHOOK_URL_FINAL` - Your final n8n webhook URL for chat processing (after logo generation, supports text + images)
+- `VITE_N8N_WEBHOOK_URL_IMAGEN` - Your image processing webhook URL (processes attached images in chat)
+- `VITE_N8N_WEBHOOK_URL_DESCRIPTION` - Your description webhook URL (generates product descriptions from images, called in parallel with image webhook)
+- `VITE_MERCADOLIBRE_IMAGE_WEBHOOK_URL` - Your MercadoLibre image webhook URL (generates main product image, default: https://sellify.app.n8n.cloud/webhook/upload-ticket)
 
 **Edit a file directly in GitHub**
 
