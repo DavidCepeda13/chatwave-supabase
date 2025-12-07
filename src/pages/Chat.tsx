@@ -257,6 +257,42 @@ export default function Chat() {
     }
   };
 
+  // Update chat title
+  const handleUpdateChatTitle = async (chatId: string, newTitle: string) => {
+    if (!newTitle.trim()) {
+      toast({
+        title: "Error",
+        description: "El nombre del chat no puede estar vacío",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const { error } = await supabase
+      .from("chats")
+      .update({ title: newTitle.trim() })
+      .eq("id", chatId);
+
+    if (error) {
+      toast({
+        title: "Error",
+        description: "No se pudo actualizar el nombre del chat",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Update local state
+    setChats((prev) =>
+      prev.map((c) => (c.id === chatId ? { ...c, title: newTitle.trim() } : c))
+    );
+
+    toast({
+      title: "Éxito",
+      description: "Nombre del chat actualizado",
+    });
+  };
+
   // Upload images to storage
   const uploadImages = async (files: File[], messageId: string, chatId: string) => {
     const uploadedUrls: string[] = [];
@@ -1799,6 +1835,7 @@ Al final, pregúntale si quiere seguir con la creación de su imagen principal p
           }}
           onNewChat={handleNewChat}
           onDeleteChat={handleDeleteChat}
+          onUpdateChatTitle={handleUpdateChatTitle}
           isOpen={sidebarOpen}
           onToggle={() => setSidebarOpen(!sidebarOpen)}
         />

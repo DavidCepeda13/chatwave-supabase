@@ -2,7 +2,8 @@ import { useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Plus, MessageSquare, Trash2, LogOut, Menu, X } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Plus, MessageSquare, Trash2, LogOut, Menu, X, Edit2, Check, X as XIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface Chat {
@@ -17,6 +18,7 @@ interface ChatSidebarProps {
   onSelectChat: (id: string) => void;
   onNewChat: () => void;
   onDeleteChat: (id: string) => void;
+  onUpdateChatTitle: (id: string, newTitle: string) => void;
   isOpen: boolean;
   onToggle: () => void;
 }
@@ -27,11 +29,14 @@ export function ChatSidebar({
   onSelectChat,
   onNewChat,
   onDeleteChat,
+  onUpdateChatTitle,
   isOpen,
   onToggle,
 }: ChatSidebarProps) {
   const { user, signOut } = useAuth();
   const [hoveredChat, setHoveredChat] = useState<string | null>(null);
+  const [editingChatId, setEditingChatId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState<string>("");
 
   return (
     <>
@@ -83,29 +88,96 @@ export function ChatSidebar({
               <div
                 key={chat.id}
                 className={cn(
-                  "group flex items-center gap-2 px-3 py-2.5 rounded-lg cursor-pointer transition-colors",
+                  "group flex items-center gap-2 px-3 py-2.5 rounded-lg transition-colors",
                   activeChat === chat.id
                     ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                    : "text-sidebar-foreground hover:bg-sidebar-accent/50"
+                    : "text-sidebar-foreground hover:bg-sidebar-accent/50",
+                  editingChatId === chat.id ? "" : "cursor-pointer"
                 )}
-                onClick={() => onSelectChat(chat.id)}
+                onClick={() => {
+                  if (editingChatId !== chat.id) {
+                    onSelectChat(chat.id);
+                  }
+                }}
                 onMouseEnter={() => setHoveredChat(chat.id)}
                 onMouseLeave={() => setHoveredChat(null)}
               >
                 <MessageSquare className="h-4 w-4 flex-shrink-0" />
-                <span className="flex-1 truncate text-sm">{chat.title}</span>
-                {hoveredChat === chat.id && (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onDeleteChat(chat.id);
-                    }}
-                  >
-                    <Trash2 className="h-3 w-3 text-destructive" />
-                  </Button>
+                {editingChatId === chat.id ? (
+                  <div className="flex-1 flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                    <Input
+                      value={editTitle}
+                      onChange={(e) => setEditTitle(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          onUpdateChatTitle(chat.id, editTitle);
+                          setEditingChatId(null);
+                          setEditTitle("");
+                        } else if (e.key === "Escape") {
+                          setEditingChatId(null);
+                          setEditTitle("");
+                        }
+                      }}
+                      className="h-7 text-sm px-2 py-1"
+                      autoFocus
+                    />
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onUpdateChatTitle(chat.id, editTitle);
+                        setEditingChatId(null);
+                        setEditTitle("");
+                      }}
+                    >
+                      <Check className="h-3 w-3 text-primary" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setEditingChatId(null);
+                        setEditTitle("");
+                      }}
+                    >
+                      <XIcon className="h-3 w-3 text-muted-foreground" />
+                    </Button>
+                  </div>
+                ) : (
+                  <>
+                    <span className="flex-1 truncate text-sm">{chat.title}</span>
+                    {hoveredChat === chat.id && (
+                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setEditingChatId(chat.id);
+                            setEditTitle(chat.title);
+                          }}
+                        >
+                          <Edit2 className="h-3 w-3 text-muted-foreground" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onDeleteChat(chat.id);
+                          }}
+                        >
+                          <Trash2 className="h-3 w-3 text-destructive" />
+                        </Button>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             ))}
