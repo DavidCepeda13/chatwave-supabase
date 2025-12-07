@@ -1,11 +1,11 @@
-import { useState, useEffect, useCallback } from "react";
-import { useAuth } from "@/hooks/useAuth";
-import { supabase } from "@/integrations/supabase/client";
-import { ChatSidebar } from "@/components/chat/ChatSidebar";
 import { ChatArea } from "@/components/chat/ChatArea";
 import { ChatInput } from "@/components/chat/ChatInput";
+import { ChatSidebar } from "@/components/chat/ChatSidebar";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/useAuth";
+import { supabase } from "@/integrations/supabase/client";
 import { Loader2 } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
 
 interface Chat {
   id: string;
@@ -47,19 +47,16 @@ export default function Chat() {
   const [brandingData, setBrandingData] = useState<BrandingData>({});
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [brandingComplete, setBrandingComplete] = useState(false);
+  const [isGeneratingLogo, setIsGeneratingLogo] = useState(false);
+  const [logoGenerated, setLogoGenerated] = useState(false);
+  const [waitingForMercadoLibreImage, setWaitingForMercadoLibreImage] = useState(false);
 
-  // Define essential branding questions (reduced to 10 core questions)
+  // Define essential branding questions (4 core questions)
   const brandingQuestions = [
     { key: "nombre_marca", question: "¿Cómo se llama tu marca?", path: ["nombre_marca"] },
     { key: "oferta_valor", question: "¿Qué problema resuelves o qué beneficio ofreces a tus clientes?", path: ["oferta_valor"] },
-    { key: "perfil_cliente", question: "Describe a tu cliente ideal (edad, intereses, necesidades principales).", path: ["perfil_cliente"] },
-    { key: "valores_marca", question: "¿Cuáles son los 3 valores fundamentales de tu marca?", path: ["valores_marca"] },
-    { key: "personalidad_marca", question: "Si tu marca fuera una persona, ¿cómo sería? (formal/casual, tradicional/moderna, divertida/seria)", path: ["personalidad_marca"] },
-    { key: "tono_voz", question: "¿Qué tono de comunicación prefieres? (profesional, amigable, inspirador, técnico)", path: ["tono_voz"] },
     { key: "colores_identidad", question: "¿Qué colores representan mejor tu marca? (máximo 3)", path: ["colores_identidad"] },
-    { key: "estilo_visual", question: "¿Qué estilo visual prefieres? (minimalista, moderno, clásico, audaz)", path: ["estilo_visual"] },
-    { key: "objetivo_principal", question: "¿Cuál es tu objetivo principal con esta marca? (ventas, reconocimiento, comunidad, educar)", path: ["objetivo_principal"] },
-    { key: "diferenciador", question: "¿Qué hace única a tu marca? ¿Por qué deberían elegirte?", path: ["diferenciador"] }
+    { key: "estilo_visual", question: "¿Qué estilo visual prefieres? (minimalista, moderno, clásico, audaz)", path: ["estilo_visual"] }
   ];
 
   // Fetch chats
@@ -99,29 +96,45 @@ export default function Chat() {
       return;
     }
 
-    // Fetch images for messages
+    // Fetch images for messages (both user and assistant messages)
     const messagesWithImages: Message[] = await Promise.all(
       (data || []).map(async (msg) => {
-        if (msg.role === "user") {
-          const { data: imageData } = await supabase
-            .from("uploaded_images")
-            .select("file_path")
-            .eq("message_id", msg.id);
+        // Fetch images for both user and assistant messages
+        const { data: imageData } = await supabase
+          .from("uploaded_images")
+          .select("file_path")
+          .eq("message_id", msg.id);
 
-          const images = imageData?.map((img) => {
-            const { data: urlData } = supabase.storage
-              .from("chat-images")
-              .getPublicUrl(img.file_path);
-            return urlData.publicUrl;
-          });
+        const images = imageData?.map((img) => {
+          // Check if it's an external URL (stored with "external:" prefix)
+          if (img.file_path.startsWith("external:")) {
+            return img.file_path.replace("external:", "");
+          }
+          // Otherwise, get the public URL from storage
+          const { data: urlData } = supabase.storage
+            .from("chat-images")
+            .getPublicUrl(img.file_path);
+          return urlData.publicUrl;
+        });
 
-          return { id: msg.id, role: msg.role as "user" | "assistant", content: msg.content, images };
-        }
-        return { id: msg.id, role: msg.role as "user" | "assistant", content: msg.content };
+        return { 
+          id: msg.id, 
+          role: msg.role as "user" | "assistant", 
+          content: msg.content, 
+          images: images && images.length > 0 ? images : undefined
+        };
       })
     );
 
     setMessages(messagesWithImages);
+    
+    // Check if logo was already generated in this chat (look for logo message)
+    const hasLogoMessage = messagesWithImages.some(
+      (msg) => msg.role === "assistant" && 
+      msg.content.includes("¡Tu logo está listo!") && 
+      msg.images && msg.images.length > 0
+    );
+    setLogoGenerated(hasLogoMessage);
   }, [activeChat, user]);
 
   useEffect(() => {
@@ -207,6 +220,9 @@ export default function Chat() {
       setActiveChat(data.id);
       setMessages([]);
       setSidebarOpen(false);
+      // Reset logo generated state for new chat
+      setLogoGenerated(false);
+      setWaitingForMercadoLibreImage(false);
     } catch (error) {
       console.error("Error creating chat:", error);
       toast({
@@ -239,6 +255,42 @@ export default function Chat() {
       setActiveChat(updatedChats[0]?.id || null);
       setMessages([]);
     }
+  };
+
+  // Update chat title
+  const handleUpdateChatTitle = async (chatId: string, newTitle: string) => {
+    if (!newTitle.trim()) {
+      toast({
+        title: "Error",
+        description: "El nombre del chat no puede estar vacío",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const { error } = await supabase
+      .from("chats")
+      .update({ title: newTitle.trim() })
+      .eq("id", chatId);
+
+    if (error) {
+      toast({
+        title: "Error",
+        description: "No se pudo actualizar el nombre del chat",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Update local state
+    setChats((prev) =>
+      prev.map((c) => (c.id === chatId ? { ...c, title: newTitle.trim() } : c))
+    );
+
+    toast({
+      title: "Éxito",
+      description: "Nombre del chat actualizado",
+    });
   };
 
   // Upload images to storage
@@ -356,6 +408,30 @@ export default function Chat() {
       // Check if we're in branding mode
       if (isBrandingMode && !brandingComplete) {
         await handleBrandingResponse(chatId, content);
+      } else if (waitingForMercadoLibreImage && images.length > 0 && content.trim()) {
+        // User has provided image and description for MercadoLibre image generation
+        setWaitingForMercadoLibreImage(false);
+        await generateMercadoLibreImage(chatId, content, images[0]);
+      } else if (logoGenerated && !waitingForMercadoLibreImage) {
+        // Check if user wants to generate MercadoLibre image (responded yes to the question)
+        const wantsToGenerate = content.toLowerCase().includes("sí") || 
+                                content.toLowerCase().includes("si") || 
+                                content.toLowerCase().includes("yes") ||
+                                content.toLowerCase().includes("quiero") ||
+                                content.toLowerCase().includes("continuar") ||
+                                content.toLowerCase().includes("adelante") ||
+                                content.toLowerCase().includes("vamos");
+        
+        if (wantsToGenerate && images.length === 0) {
+          // User wants to generate but hasn't provided image yet
+          // Set state to wait for image and description
+          setWaitingForMercadoLibreImage(true);
+          // Continue with regular chat so agent can ask for image and description
+          await handleRegularChat(chatId, content, images);
+        } else {
+          // Regular n8n chat flow
+          await handleRegularChat(chatId, content, images);
+        }
       } else {
         // Regular n8n chat flow
         await handleRegularChat(chatId, content, images);
@@ -380,11 +456,11 @@ export default function Chat() {
       const newData = { ...brandingData };
       
       // Set nested properties
-      let target: any = newData;
+      let target: Record<string, unknown> = newData;
       for (let i = 0; i < currentQuestion.path.length - 1; i++) {
         const key = currentQuestion.path[i];
         if (!target[key]) target[key] = {};
-        target = target[key];
+        target = target[key] as Record<string, unknown>;
       }
       
       const finalKey = currentQuestion.path[currentQuestion.path.length - 1];
@@ -412,29 +488,11 @@ Has completado exitosamente el perfil de branding de tu marca. Aquí está tu re
 **Oferta de Valor:**
 ${newData.oferta_valor || 'No especificada'}
 
-**Cliente Ideal:**
-${newData.perfil_cliente || 'No especificado'}
-
-**Valores Fundamentales:**
-${newData.valores_marca || 'No especificados'}
-
-**Personalidad de Marca:**
-${newData.personalidad_marca || 'No especificada'}
-
-**Tono de Voz:**
-${newData.tono_voz || 'No especificado'}
-
 **Colores de Identidad:**
 ${newData.colores_identidad || 'No especificados'}
 
 **Estilo Visual:**
 ${newData.estilo_visual || 'No especificado'}
-
-**Objetivo Principal:**
-${newData.objetivo_principal || 'No especificado'}
-
-**Diferenciador Único:**
-${newData.diferenciador || 'No especificado'}
 
 ---
 
@@ -465,6 +523,9 @@ Puedes usar esta información para desarrollar tu identidad de marca, crear cont
           title: "¡Completado!",
           description: "Se ha recopilado toda la información de branding",
         });
+
+        // Generate logo by calling the webhook
+        await generateLogo(chatId, newData);
       } else {
         // Ask next question
         setCurrentQuestionIndex(nextIndex);
@@ -496,16 +557,987 @@ Puedes usar esta información para desarrollar tu identidad de marca, crear cont
     }
   };
 
+  // Generate logo by calling the webhook
+  const generateLogo = async (chatId: string, brandingData: BrandingData) => {
+    setIsGeneratingLogo(true);
+    
+    try {
+      const logoWebhookUrl = import.meta.env.VITE_LOGO_GENERATOR_WEBHOOK_URL;
+      
+      if (!logoWebhookUrl) {
+        throw new Error("VITE_LOGO_GENERATOR_WEBHOOK_URL no está configurada en las variables de entorno");
+      }
+
+      // Prepare the request body with all branding data
+      const requestBody = {
+        chat_id: chatId,
+        nombre_marca: brandingData.nombre_marca || "",
+        oferta_valor: brandingData.oferta_valor || "",
+        colores_identidad: brandingData.colores_identidad || "",
+        estilo_visual: brandingData.estilo_visual || "",
+      };
+
+      // Show loading message
+      const loadingMessage = "🎨 Generando tu logo personalizado... Esto puede tomar unos momentos.";
+      const { data: loadingMsg, error: loadingError } = await supabase
+        .from("messages")
+        .insert({
+          chat_id: chatId,
+          user_id: user!.id,
+          role: "assistant",
+          content: loadingMessage,
+        })
+        .select()
+        .single();
+
+      if (!loadingError && loadingMsg) {
+        setMessages((prev) => [
+          ...prev,
+          { id: loadingMsg.id, role: "assistant", content: loadingMessage },
+        ]);
+      }
+
+      // Call the webhook
+      const response = await fetch(logoWebhookUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(requestBody),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        let errorMessage = "Error al generar el logo";
+        try {
+          const errorData = JSON.parse(errorText);
+          errorMessage = errorData.error || errorData.message || errorMessage;
+        } catch {
+          errorMessage = errorText || errorMessage;
+        }
+        throw new Error(errorMessage);
+      }
+
+      // Get the response - it should be an image
+      // The response could be:
+      // 1. A direct image (blob)
+      // 2. A JSON with an image URL
+      // 3. A JSON with base64 image data
+      
+      const contentType = response.headers.get("content-type");
+      let imageUrl: string;
+      let imageBlob: Blob | null = null;
+      let isBase64 = false;
+
+      if (contentType?.startsWith("image/")) {
+        // Direct image response
+        imageBlob = await response.blob();
+        imageUrl = URL.createObjectURL(imageBlob);
+      } else {
+        // JSON response with image data
+        const data = await response.json();
+        
+        if (data.image_url) {
+          imageUrl = data.image_url;
+        } else if (data.image) {
+          imageUrl = data.image;
+          if (imageUrl.startsWith("data:image")) {
+            isBase64 = true;
+          }
+        } else if (data.logo_url) {
+          imageUrl = data.logo_url;
+        } else if (data.data && typeof data.data === "string" && data.data.startsWith("data:image")) {
+          // Base64 image
+          imageUrl = data.data;
+          isBase64 = true;
+        } else if (data.url) {
+          imageUrl = data.url;
+        } else {
+          throw new Error("Formato de respuesta no reconocido del webhook");
+        }
+      }
+
+      // Remove loading message and add logo message
+      if (loadingMsg) {
+        setMessages((prev) => prev.filter((msg) => msg.id !== loadingMsg.id));
+        await supabase.from("messages").delete().eq("id", loadingMsg.id);
+      }
+
+      // Save logo message first
+      const logoMessage = `**¡Tu logo está listo!** 🎉
+
+He generado un logo personalizado basado en el perfil de branding de tu marca.`;
+
+      const { data: logoMsg, error: logoError } = await supabase
+        .from("messages")
+        .insert({
+          chat_id: chatId,
+          user_id: user!.id,
+          role: "assistant",
+          content: logoMessage,
+        })
+        .select()
+        .single();
+
+      if (logoError || !logoMsg) {
+        throw new Error("No se pudo guardar el mensaje del logo");
+      }
+
+      // Save logo image to storage if it's a blob or base64, or save external URL reference
+      let finalImageUrl = imageUrl;
+      const isExternalUrl = !imageBlob && !isBase64 && (imageUrl.startsWith("http://") || imageUrl.startsWith("https://"));
+      
+      if (imageBlob || isBase64) {
+        try {
+          // Convert base64 to blob if needed
+          let blobToUpload: Blob;
+          let fileName: string;
+          
+          if (imageBlob) {
+            blobToUpload = imageBlob;
+            fileName = `logo-${Date.now()}.png`;
+          } else {
+            // Convert base64 to blob
+            const base64Data = imageUrl.split(",")[1] || imageUrl;
+            const byteCharacters = atob(base64Data);
+            const byteNumbers = new Array(byteCharacters.length);
+            for (let i = 0; i < byteCharacters.length; i++) {
+              byteNumbers[i] = byteCharacters.charCodeAt(i);
+            }
+            const byteArray = new Uint8Array(byteNumbers);
+            blobToUpload = new Blob([byteArray], { type: "image/png" });
+            fileName = `logo-${Date.now()}.png`;
+          }
+
+          // Upload to Supabase Storage
+          const filePath = `${user!.id}/${chatId}/${logoMsg.id}/${fileName}`;
+          
+          const { error: uploadError } = await supabase.storage
+            .from("chat-images")
+            .upload(filePath, blobToUpload, {
+              contentType: blobToUpload.type,
+              upsert: false,
+            });
+
+          if (uploadError) {
+            console.error("Error uploading logo:", uploadError);
+            // Continue with the original URL if upload fails
+          } else {
+            // Get public URL
+            const { data: urlData } = supabase.storage
+              .from("chat-images")
+              .getPublicUrl(filePath);
+            finalImageUrl = urlData.publicUrl;
+
+            // Save image record in database
+            await supabase.from("uploaded_images").insert({
+              user_id: user!.id,
+              message_id: logoMsg.id,
+              chat_id: chatId,
+              file_name: fileName,
+              file_path: filePath,
+              file_size: blobToUpload.size,
+              mime_type: blobToUpload.type,
+            });
+          }
+        } catch (error) {
+          console.error("Error processing logo image:", error);
+          // Continue with the original URL if processing fails
+        }
+      } else if (isExternalUrl) {
+        // For external URLs, save the URL reference in the database
+        // We'll use a special file_path format to indicate it's an external URL
+        try {
+          await supabase.from("uploaded_images").insert({
+            user_id: user!.id,
+            message_id: logoMsg.id,
+            chat_id: chatId,
+            file_name: "logo-external.png",
+            file_path: `external:${imageUrl}`, // Special prefix to indicate external URL
+            file_size: null,
+            mime_type: "image/png",
+          });
+        } catch (error) {
+          console.error("Error saving external logo URL:", error);
+        }
+      }
+
+      // Update UI with the final image URL
+      setMessages((prev) => [
+        ...prev,
+        { 
+          id: logoMsg.id, 
+          role: "assistant", 
+          content: logoMessage,
+          images: [finalImageUrl]
+        },
+      ]);
+
+      toast({
+        title: "¡Logo generado!",
+        description: "Tu logo personalizado ha sido creado exitosamente",
+      });
+
+      // Mark logo as generated so we use the final webhook from now on
+      setLogoGenerated(true);
+
+      // Send automatic message to conversational agent
+      await sendLogoCompletionMessage(chatId, brandingData);
+
+    } catch (error) {
+      console.error("Error generating logo:", error);
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "No se pudo generar el logo",
+        variant: "destructive",
+      });
+    } finally {
+      setIsGeneratingLogo(false);
+    }
+  };
+
+  // Generate MercadoLibre main image
+  const generateMercadoLibreImage = async (chatId: string, description: string, imageFile: File) => {
+    setIsLoading(true);
+    
+    try {
+      // Always use the exact URL specified
+      const mercadoLibreWebhookUrl = "https://sellify.app.n8n.cloud/webhook/upload-ticket";
+      
+      // Convert image to base64
+      const convertImageToBase64 = (file: File): Promise<string> => {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            const base64String = reader.result as string;
+            // Remove data URL prefix if present
+            const base64Data = base64String.includes(",") ? base64String.split(",")[1] : base64String;
+            resolve(base64Data);
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+      };
+
+      const fileBase64 = await convertImageToBase64(imageFile);
+
+      // Show loading message
+      const loadingMessage = "🎨 Generando tu imagen principal para MercadoLibre... Esto puede tomar unos momentos.";
+      const { data: loadingMsg, error: loadingError } = await supabase
+        .from("messages")
+        .insert({
+          chat_id: chatId,
+          user_id: user!.id,
+          role: "assistant",
+          content: loadingMessage,
+        })
+        .select()
+        .single();
+
+      if (!loadingError && loadingMsg) {
+        setMessages((prev) => [
+          ...prev,
+          { id: loadingMsg.id, role: "assistant", content: loadingMessage },
+        ]);
+      }
+
+      // Call the webhook - exact URL as specified
+      const webhookUrl = "https://sellify.app.n8n.cloud/webhook/upload-ticket";
+      
+      // Prepare request body exactly as specified: {"Description":"d", "FileBase64":"afdfsd"}
+      const requestBody = {
+        Description: description,
+        FileBase64: fileBase64,
+      };
+      
+      console.log("Calling MercadoLibre webhook:", webhookUrl);
+      console.log("Request body:", { Description: description, FileBase64: `[${fileBase64.length} chars]` });
+      
+      const response = await fetch(webhookUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(requestBody),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        let errorMessage = "Error al generar la imagen";
+        try {
+          const errorData = JSON.parse(errorText);
+          errorMessage = errorData.error || errorData.message || errorMessage;
+        } catch {
+          errorMessage = errorText || errorMessage;
+        }
+        throw new Error(errorMessage);
+      }
+
+      // Get the response
+      const contentType = response.headers.get("content-type");
+      let imageUrl: string;
+      let imageBlob: Blob | null = null;
+      let isBase64 = false;
+
+      if (contentType?.startsWith("image/")) {
+        // Direct image response
+        imageBlob = await response.blob();
+        imageUrl = URL.createObjectURL(imageBlob);
+      } else {
+        // JSON response
+        const data = await response.json();
+        
+        if (data.image_url) {
+          imageUrl = data.image_url;
+        } else if (data.image) {
+          imageUrl = data.image;
+          if (imageUrl.startsWith("data:image")) {
+            isBase64 = true;
+          }
+        } else if (data.url) {
+          imageUrl = data.url;
+        } else if (data.data && typeof data.data === "string" && data.data.startsWith("data:image")) {
+          imageUrl = data.data;
+          isBase64 = true;
+        } else {
+          throw new Error("Formato de respuesta no reconocido del webhook");
+        }
+      }
+
+      // Remove loading message
+      if (loadingMsg) {
+        setMessages((prev) => prev.filter((msg) => msg.id !== loadingMsg.id));
+        await supabase.from("messages").delete().eq("id", loadingMsg.id);
+      }
+
+      // Save result message
+      const resultMessage = `**¡Tu imagen principal está lista!** 🎉
+
+He generado tu imagen principal para MercadoLibre basada en tu descripción y la imagen que subiste.`;
+
+      const { data: resultMsg, error: resultError } = await supabase
+        .from("messages")
+        .insert({
+          chat_id: chatId,
+          user_id: user!.id,
+          role: "assistant",
+          content: resultMessage,
+        })
+        .select()
+        .single();
+
+      if (resultError || !resultMsg) {
+        throw new Error("No se pudo guardar el mensaje de resultado");
+      }
+
+      // Save image to storage if it's a blob or base64
+      let finalImageUrl = imageUrl;
+      const isExternalUrl = !imageBlob && !isBase64 && (imageUrl.startsWith("http://") || imageUrl.startsWith("https://"));
+      
+      if (imageBlob || isBase64) {
+        try {
+          let blobToUpload: Blob;
+          let fileName: string;
+          
+          if (imageBlob) {
+            blobToUpload = imageBlob;
+            fileName = `mercadolibre-${Date.now()}.png`;
+          } else {
+            const base64Data = imageUrl.split(",")[1] || imageUrl;
+            const byteCharacters = atob(base64Data);
+            const byteNumbers = new Array(byteCharacters.length);
+            for (let i = 0; i < byteCharacters.length; i++) {
+              byteNumbers[i] = byteCharacters.charCodeAt(i);
+            }
+            const byteArray = new Uint8Array(byteNumbers);
+            blobToUpload = new Blob([byteArray], { type: "image/png" });
+            fileName = `mercadolibre-${Date.now()}.png`;
+          }
+
+          const filePath = `${user!.id}/${chatId}/${resultMsg.id}/${fileName}`;
+          
+          const { error: uploadError } = await supabase.storage
+            .from("chat-images")
+            .upload(filePath, blobToUpload, {
+              contentType: blobToUpload.type,
+              upsert: false,
+            });
+
+          if (!uploadError) {
+            const { data: urlData } = supabase.storage
+              .from("chat-images")
+              .getPublicUrl(filePath);
+            finalImageUrl = urlData.publicUrl;
+
+            await supabase.from("uploaded_images").insert({
+              user_id: user!.id,
+              message_id: resultMsg.id,
+              chat_id: chatId,
+              file_name: fileName,
+              file_path: filePath,
+              file_size: blobToUpload.size,
+              mime_type: blobToUpload.type,
+            });
+          }
+        } catch (error) {
+          console.error("Error processing image:", error);
+        }
+      } else if (isExternalUrl) {
+        try {
+          await supabase.from("uploaded_images").insert({
+            user_id: user!.id,
+            message_id: resultMsg.id,
+            chat_id: chatId,
+            file_name: "mercadolibre-external.png",
+            file_path: `external:${imageUrl}`,
+            file_size: null,
+            mime_type: "image/png",
+          });
+        } catch (error) {
+          console.error("Error saving external image URL:", error);
+        }
+      }
+
+      // Update UI
+      setMessages((prev) => [
+        ...prev,
+        { 
+          id: resultMsg.id, 
+          role: "assistant", 
+          content: resultMessage,
+          images: [finalImageUrl]
+        },
+      ]);
+
+      toast({
+        title: "¡Imagen generada!",
+        description: "Tu imagen principal para MercadoLibre ha sido creada exitosamente",
+      });
+
+    } catch (error) {
+      console.error("Error generating MercadoLibre image:", error);
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "No se pudo generar la imagen",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Send automatic message to conversational agent after logo generation
+  const sendLogoCompletionMessage = async (chatId: string, brandingData: BrandingData) => {
+    try {
+      const finalWebhookUrl = import.meta.env.VITE_N8N_WEBHOOK_URL_FINAL;
+      
+      if (!finalWebhookUrl) {
+        console.warn("VITE_N8N_WEBHOOK_URL_FINAL no está configurada, no se puede enviar el mensaje automático");
+        return;
+      }
+
+      // Prepare the message for the agent
+      const systemMessage = `Acabamos de terminar la creación del logo del usuario. Presenta de forma amigable y breve un resumen de lo que el logo representa para su marca basándote en esta información:
+- Nombre: ${brandingData.nombre_marca || 'No especificado'}
+- Oferta de valor: ${brandingData.oferta_valor || 'No especificada'}
+- Colores: ${brandingData.colores_identidad || 'No especificados'}
+- Estilo visual: ${brandingData.estilo_visual || 'No especificado'}
+
+Al final, pregúntale si quiere seguir con la creación de su imagen principal para MercadoLibre. Sé breve, amigable y entusiasta.`;
+
+      // Send message to final webhook
+      const response = await fetch(finalWebhookUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          chat_id: chatId,
+          prompt: systemMessage,
+        }),
+      });
+
+      if (!response.ok) {
+        console.error("Error sending logo completion message:", response.statusText);
+        return;
+      }
+
+      // Handle response from the agent
+      const contentType = response.headers.get("content-type");
+      
+      if (contentType?.includes("application/json")) {
+        const data = await response.json();
+        
+        // Extract text content
+        const assistantContent = data.text || data.content || data.message || "";
+        
+        // Extract images (can be 0, 1, or multiple)
+        const responseImages: string[] = [];
+        
+        if (data.images && Array.isArray(data.images)) {
+          for (const img of data.images) {
+            if (typeof img === "string") {
+              responseImages.push(img);
+            } else if (img.url) {
+              responseImages.push(img.url);
+            } else if (img.data) {
+              responseImages.push(img.data);
+            }
+          }
+        } else if (data.image) {
+          if (typeof data.image === "string") {
+            responseImages.push(data.image);
+          } else if (data.image.url) {
+            responseImages.push(data.image.url);
+          } else if (data.image.data) {
+            responseImages.push(data.image.data);
+          }
+        } else if (data.image_url) {
+          responseImages.push(data.image_url);
+        } else if (data.logo_url) {
+          responseImages.push(data.logo_url);
+        } else if (data.url) {
+          responseImages.push(data.url);
+        }
+
+          // Save assistant message
+          const { data: assistantMsg, error: assistantMsgError } = await supabase
+            .from("messages")
+            .insert({
+              chat_id: chatId,
+              user_id: user!.id,
+              role: "assistant",
+              content: assistantContent || "(sin texto)",
+            })
+            .select()
+            .single();
+
+          if (!assistantMsgError && assistantMsg) {
+            setMessages((prev) => [
+              ...prev,
+              { 
+                id: assistantMsg.id, 
+                role: "assistant", 
+                content: assistantContent || "(sin texto)",
+                images: responseImages.length > 0 ? responseImages : undefined
+              },
+            ]);
+            
+            // Check if agent is asking for image and description for MercadoLibre
+            if (logoGenerated && !waitingForMercadoLibreImage) {
+              const askingForImage = assistantContent.toLowerCase().includes("imagen") && 
+                                     (assistantContent.toLowerCase().includes("sube") || 
+                                      assistantContent.toLowerCase().includes("envía") ||
+                                      assistantContent.toLowerCase().includes("comparte") ||
+                                      assistantContent.toLowerCase().includes("carga") ||
+                                      assistantContent.toLowerCase().includes("subir"));
+              if (askingForImage) {
+                setWaitingForMercadoLibreImage(true);
+              }
+            }
+          }
+      } else {
+        // Non-JSON response, treat as text
+        const text = await response.text();
+        
+        const { data: assistantMsg, error: assistantMsgError } = await supabase
+          .from("messages")
+          .insert({
+            chat_id: chatId,
+            user_id: user!.id,
+            role: "assistant",
+            content: text,
+          })
+          .select()
+          .single();
+
+        if (!assistantMsgError && assistantMsg) {
+          setMessages((prev) => [
+            ...prev,
+            { id: assistantMsg.id, role: "assistant", content: text },
+          ]);
+        }
+      }
+    } catch (error) {
+      console.error("Error sending logo completion message:", error);
+      // Don't show error to user, just log it
+    }
+  };
+
+  // Handle image webhook call
+  const handleImageWebhook = async (chatId: string, description: string, imageFile: File) => {
+    try {
+      const imageWebhookUrl = import.meta.env.VITE_N8N_WEBHOOK_URL_IMAGEN;
+      const descriptionWebhookUrl = import.meta.env.VITE_N8N_WEBHOOK_URL_DESCRIPTION;
+      
+      if (!imageWebhookUrl) {
+        throw new Error("VITE_N8N_WEBHOOK_URL_IMAGEN no está configurada en las variables de entorno");
+      }
+
+      if (!descriptionWebhookUrl) {
+        throw new Error("VITE_N8N_WEBHOOK_URL_DESCRIPTION no está configurada en las variables de entorno");
+      }
+
+      // Convert image to base64 without prefix
+      const convertImageToBase64 = (file: File): Promise<string> => {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            const base64String = reader.result as string;
+            // Remove data URL prefix if present
+            const base64Data = base64String.includes(",") ? base64String.split(",")[1] : base64String;
+            resolve(base64Data);
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+      };
+
+      const fileBase64 = await convertImageToBase64(imageFile);
+      const requestBody = {
+        Description: description || "",
+        FileBase64: fileBase64,
+      };
+
+      // First: Call image webhook
+      const imageResponse = await fetch(imageWebhookUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(requestBody),
+      });
+
+      if (!imageResponse.ok) {
+        const errorText = await imageResponse.text();
+        let errorMessage = "Error al procesar la imagen";
+        try {
+          const errorData = JSON.parse(errorText);
+          errorMessage = errorData.error || errorData.message || errorMessage;
+        } catch {
+          errorMessage = errorText || errorMessage;
+        }
+        throw new Error(errorMessage);
+      }
+
+      // Process image response first (show image first)
+      const imageContentType = imageResponse.headers.get("content-type");
+      let responseImageUrl: string | null = null;
+      let imageBlob: Blob | null = null;
+      let isBase64 = false;
+      let imageMessageId: string | null = null;
+
+      if (imageContentType?.startsWith("image/")) {
+        // Direct image response
+        imageBlob = await imageResponse.blob();
+        responseImageUrl = URL.createObjectURL(imageBlob);
+      } else if (imageContentType?.includes("application/json")) {
+        // JSON response with image
+        const imageData = await imageResponse.json();
+        
+        // Extract image
+        if (imageData.image_url) {
+          responseImageUrl = imageData.image_url;
+        } else if (imageData.image) {
+          if (typeof imageData.image === "string") {
+            responseImageUrl = imageData.image;
+            if (responseImageUrl.startsWith("data:image")) {
+              isBase64 = true;
+            }
+          } else if (imageData.image.url) {
+            responseImageUrl = imageData.image.url;
+          } else if (imageData.image.data) {
+            responseImageUrl = imageData.image.data;
+            isBase64 = true;
+          }
+        } else if (imageData.url) {
+          responseImageUrl = imageData.url;
+        } else if (imageData.data && typeof imageData.data === "string" && imageData.data.startsWith("data:image")) {
+          responseImageUrl = imageData.data;
+          isBase64 = true;
+        }
+      }
+
+      // Save image message first (if we have an image)
+      if (responseImageUrl) {
+        const { data: imageMsg, error: imageMsgError } = await supabase
+          .from("messages")
+          .insert({
+            chat_id: chatId,
+            user_id: user!.id,
+            role: "assistant",
+            content: "He procesado tu imagen.",
+          })
+          .select()
+          .single();
+
+        if (!imageMsgError && imageMsg) {
+          imageMessageId = imageMsg.id;
+
+          // Save image to storage
+          let finalImageUrl = responseImageUrl;
+          const isExternalUrl = !imageBlob && !isBase64 && (responseImageUrl.startsWith("http://") || responseImageUrl.startsWith("https://"));
+          
+          if (imageBlob || isBase64) {
+            try {
+              let blobToUpload: Blob;
+              let fileName: string;
+              
+              if (imageBlob) {
+                blobToUpload = imageBlob;
+                fileName = `processed-${Date.now()}.png`;
+              } else {
+                const base64Data = responseImageUrl.split(",")[1] || responseImageUrl;
+                const byteCharacters = atob(base64Data);
+                const byteNumbers = new Array(byteCharacters.length);
+                for (let i = 0; i < byteCharacters.length; i++) {
+                  byteNumbers[i] = byteCharacters.charCodeAt(i);
+                }
+                const byteArray = new Uint8Array(byteNumbers);
+                blobToUpload = new Blob([byteArray], { type: "image/png" });
+                fileName = `processed-${Date.now()}.png`;
+              }
+
+              const filePath = `${user!.id}/${chatId}/${imageMsg.id}/${fileName}`;
+              
+              const { error: uploadError } = await supabase.storage
+                .from("chat-images")
+                .upload(filePath, blobToUpload, {
+                  contentType: blobToUpload.type,
+                  upsert: false,
+                });
+
+              if (!uploadError) {
+                const { data: urlData } = supabase.storage
+                  .from("chat-images")
+                  .getPublicUrl(filePath);
+                finalImageUrl = urlData.publicUrl;
+
+                await supabase.from("uploaded_images").insert({
+                  user_id: user!.id,
+                  message_id: imageMsg.id,
+                  chat_id: chatId,
+                  file_name: fileName,
+                  file_path: filePath,
+                  file_size: blobToUpload.size,
+                  mime_type: blobToUpload.type,
+                });
+              }
+            } catch (error) {
+              console.error("Error processing response image:", error);
+            }
+          } else if (isExternalUrl) {
+            try {
+              await supabase.from("uploaded_images").insert({
+                user_id: user!.id,
+                message_id: imageMsg.id,
+                chat_id: chatId,
+                file_name: "processed-external.png",
+                file_path: `external:${responseImageUrl}`,
+                file_size: null,
+                mime_type: "image/png",
+              });
+            } catch (error) {
+              console.error("Error saving external image URL:", error);
+            }
+          }
+
+          // Show image message first
+          setMessages((prev) => [
+            ...prev,
+            { 
+              id: imageMsg.id, 
+              role: "assistant", 
+              content: "He procesado tu imagen.",
+              images: [finalImageUrl]
+            },
+          ]);
+        }
+      }
+
+      // Second: Call description webhook after image is processed and shown
+      let descriptionText = "";
+      try {
+        const descriptionResponse = await fetch(descriptionWebhookUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(requestBody),
+        });
+
+        if (descriptionResponse.ok) {
+          try {
+            const responseText = await descriptionResponse.text();
+            console.log("Description response text:", responseText);
+            
+            let descriptionData: unknown;
+            try {
+              descriptionData = JSON.parse(responseText);
+            } catch {
+              // Not JSON, use as plain text
+              descriptionText = responseText;
+              descriptionData = null;
+            }
+            
+            if (descriptionData) {
+              console.log("Description response data:", descriptionData);
+              
+              // Parse the structure: [{"output": {"title": "...", "description": "..."}}]
+              if (Array.isArray(descriptionData) && descriptionData.length > 0) {
+                const firstItem = descriptionData[0] as Record<string, unknown>;
+                if (firstItem.output) {
+                  const output = firstItem.output as Record<string, unknown>;
+                  const title = (output.title as string) || "";
+                  const description = (output.description as string) || "";
+                  
+                  if (title && description) {
+                    descriptionText = `**${title}**\n\n${description}`;
+                  } else if (title) {
+                    descriptionText = `**${title}**`;
+                  } else if (description) {
+                    descriptionText = description;
+                  }
+                } else if (firstItem.title || firstItem.description) {
+                  // Direct structure in array: [{"title": "...", "description": "..."}]
+                  const title = (firstItem.title as string) || "";
+                  const description = (firstItem.description as string) || "";
+                  
+                  if (title && description) {
+                    descriptionText = `**${title}**\n\n${description}`;
+                  } else if (title) {
+                    descriptionText = `**${title}**`;
+                  } else if (description) {
+                    descriptionText = description;
+                  }
+                }
+              } else if (typeof descriptionData === "object" && descriptionData !== null) {
+                const data = descriptionData as Record<string, unknown>;
+                
+                // Check for direct title/description first (most common case)
+                if (data.title !== undefined || data.description !== undefined) {
+                  // Direct structure: {"title": "...", "description": "..."}
+                  const title = (data.title as string) || "";
+                  const description = (data.description as string) || "";
+                  
+                  console.log("Found direct title/description structure:", { title, description });
+                  
+                  if (title && description) {
+                    descriptionText = `**${title}**\n\n${description}`;
+                  } else if (title) {
+                    descriptionText = `**${title}**`;
+                  } else if (description) {
+                    descriptionText = description;
+                  }
+                } else if (data.output) {
+                  // Structure: {"output": {"title": "...", "description": "..."}}
+                  const output = data.output as Record<string, unknown>;
+                  const title = (output.title as string) || "";
+                  const description = (output.description as string) || "";
+                  
+                  console.log("Found output structure:", { title, description });
+                  
+                  if (title && description) {
+                    descriptionText = `**${title}**\n\n${description}`;
+                  } else if (title) {
+                    descriptionText = `**${title}**`;
+                  } else if (description) {
+                    descriptionText = description;
+                  }
+                } else {
+                  console.warn("Unknown description data structure:", data);
+                }
+              } else if (typeof descriptionData === "string") {
+                descriptionText = descriptionData;
+              }
+            }
+          } catch (error) {
+            console.error("Error parsing description response:", error);
+          }
+        } else {
+          // Response not OK, try to get error message
+          try {
+            const errorText = await descriptionResponse.text();
+            console.error("Description webhook error:", descriptionResponse.status, errorText);
+          } catch {
+            console.error("Description webhook error:", descriptionResponse.status, descriptionResponse.statusText);
+          }
+        }
+      } catch (error) {
+        console.error("Error calling description webhook:", error);
+        // Continue even if description fails
+      }
+
+      // Save description message (after image)
+      console.log("Final descriptionText value:", descriptionText);
+      console.log("descriptionText length:", descriptionText?.length);
+      console.log("descriptionText trimmed:", descriptionText?.trim());
+      
+      if (descriptionText && descriptionText.trim()) {
+        console.log("Saving description text:", descriptionText);
+        const { data: descriptionMsg, error: descriptionMsgError } = await supabase
+          .from("messages")
+          .insert({
+            chat_id: chatId,
+            user_id: user!.id,
+            role: "assistant",
+            content: descriptionText,
+          })
+          .select()
+          .single();
+
+        if (descriptionMsgError) {
+          console.error("Error saving description message:", descriptionMsgError);
+        } else if (descriptionMsg) {
+          console.log("Description message saved successfully:", descriptionMsg.id);
+          // Show description message after image
+          setMessages((prev) => [
+            ...prev,
+            { 
+              id: descriptionMsg.id, 
+              role: "assistant", 
+              content: descriptionText
+            },
+          ]);
+        } else {
+          console.warn("No description message returned from database");
+        }
+      } else {
+        console.warn("No description text to save - descriptionText is empty or whitespace");
+        console.warn("descriptionText value:", descriptionText);
+      }
+
+    } catch (error) {
+      console.error("Error in image webhook:", error);
+      throw error;
+    }
+  };
+
   // Handle regular chat (existing functionality)
   const handleRegularChat = async (chatId: string, content: string, images: File[]) => {
     try {
-      // Use proxy in development to avoid CORS
-      const n8nWebhookUrl = import.meta.env.DEV 
-        ? "/api/chat" 
-        : import.meta.env.VITE_N8N_WEBHOOK_URL;
+      // If there's an image, use the image webhook instead
+      if (images.length > 0) {
+        await handleImageWebhook(chatId, content, images[0]);
+        return;
+      }
+
+      // Use final webhook if logo was generated, otherwise use regular webhook
+      let n8nWebhookUrl: string | undefined;
       
-      if (!n8nWebhookUrl) {
-        throw new Error("VITE_N8N_WEBHOOK_URL no está configurada en las variables de entorno");
+      if (logoGenerated) {
+        n8nWebhookUrl = import.meta.env.VITE_N8N_WEBHOOK_URL_FINAL;
+        if (!n8nWebhookUrl) {
+          throw new Error("VITE_N8N_WEBHOOK_URL_FINAL no está configurada en las variables de entorno");
+        }
+      } else {
+        n8nWebhookUrl = import.meta.env.DEV 
+          ? "/api/chat" 
+          : import.meta.env.VITE_N8N_WEBHOOK_URL;
+        
+        if (!n8nWebhookUrl) {
+          throw new Error("VITE_N8N_WEBHOOK_URL no está configurada en las variables de entorno");
+        }
       }
 
       // Prepare prompt - include context from previous messages if needed
@@ -538,7 +1570,7 @@ Puedes usar esta información para desarrollar tu identidad de marca, crear cont
         prompt: prompt,
       };
 
-      // Convert and add images if any
+      // Convert and add images if any (always in base64 for final webhook)
       if (images.length > 0) {
         const imageData = await Promise.all(
           images.map(async (file) => ({
@@ -570,100 +1602,202 @@ Puedes usar esta información para desarrollar tu identidad de marca, crear cont
         throw new Error(errorMessage);
       }
 
-      // Stream response from n8n
-      const reader = response.body?.getReader();
-      if (!reader) {
-        throw new Error("No se pudo obtener el stream de respuesta");
-      }
-
-      const decoder = new TextDecoder();
-      let assistantContent = "";
-      let textBuffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        textBuffer += decoder.decode(value, { stream: true });
-
-        // Handle different streaming formats from n8n
-        // Format 1: SSE (Server-Sent Events) with "data: " prefix
-        // Format 2: Plain text streaming
-        // Format 3: JSON lines
-
-        let newlineIndex: number;
-        while ((newlineIndex = textBuffer.indexOf("\n")) !== -1) {
-          let line = textBuffer.slice(0, newlineIndex);
-          textBuffer = textBuffer.slice(newlineIndex + 1);
-
-          if (line.endsWith("\r")) line = line.slice(0, -1);
-          if (line.trim() === "") continue;
-
-          // Handle SSE format
-          if (line.startsWith("data: ")) {
-            const data = line.slice(6).trim();
-            if (data === "[DONE]") break;
-            
-            try {
-              const parsed = JSON.parse(data);
-              // Try different possible response formats
-              const content = parsed.content || parsed.text || parsed.message || parsed.data || data;
-              if (typeof content === "string") {
-                assistantContent += content;
-                setStreamingContent(assistantContent);
+      // Handle response based on whether logo was generated
+      if (logoGenerated) {
+        // Final webhook: JSON response with text and images
+        const contentType = response.headers.get("content-type");
+        
+        if (contentType?.includes("application/json")) {
+          const data = await response.json();
+          
+          // Extract text content
+          const assistantContent = data.text || data.content || data.message || "";
+          
+          // Extract images (can be 0, 1, or multiple)
+          const responseImages: string[] = [];
+          
+          if (data.images && Array.isArray(data.images)) {
+            // Array of images
+            for (const img of data.images) {
+              if (typeof img === "string") {
+                responseImages.push(img);
+              } else if (img.url) {
+                responseImages.push(img.url);
+              } else if (img.data) {
+                responseImages.push(img.data);
               }
-            } catch {
-              // If not JSON, treat as plain text
-              assistantContent += data;
-              setStreamingContent(assistantContent);
             }
-          } 
-          // Handle JSON lines format
-          else if (line.startsWith("{") || line.startsWith("[")) {
-            try {
-              const parsed = JSON.parse(line);
-              const content = parsed.content || parsed.text || parsed.message || parsed.data;
-              if (typeof content === "string") {
-                assistantContent += content;
-                setStreamingContent(assistantContent);
-              }
-            } catch {
-              // Invalid JSON, skip
+          } else if (data.image) {
+            // Single image
+            if (typeof data.image === "string") {
+              responseImages.push(data.image);
+            } else if (data.image.url) {
+              responseImages.push(data.image.url);
+            } else if (data.image.data) {
+              responseImages.push(data.image.data);
             }
+          } else if (data.image_url) {
+            responseImages.push(data.image_url);
+          } else if (data.logo_url) {
+            responseImages.push(data.logo_url);
+          } else if (data.url) {
+            responseImages.push(data.url);
           }
-          // Handle plain text streaming
-          else {
-            assistantContent += line;
-            setStreamingContent(assistantContent);
+
+          // Save assistant message with text and images
+          const { data: assistantMsg, error: assistantMsgError } = await supabase
+            .from("messages")
+            .insert({
+              chat_id: chatId,
+              user_id: user!.id,
+              role: "assistant",
+              content: assistantContent || "(sin texto)",
+            })
+            .select()
+            .single();
+
+          if (assistantMsgError) throw assistantMsgError;
+
+          setMessages((prev) => [
+            ...prev,
+            { 
+              id: assistantMsg.id, 
+              role: "assistant", 
+              content: assistantContent || "(sin texto)",
+              images: responseImages.length > 0 ? responseImages : undefined
+            },
+          ]);
+        } else {
+          // Non-JSON response, treat as text
+          const text = await response.text();
+          
+          const { data: assistantMsg, error: assistantMsgError } = await supabase
+            .from("messages")
+            .insert({
+              chat_id: chatId,
+              user_id: user!.id,
+              role: "assistant",
+              content: text,
+            })
+            .select()
+            .single();
+
+          if (assistantMsgError) throw assistantMsgError;
+
+          setMessages((prev) => [
+            ...prev,
+            { id: assistantMsg.id, role: "assistant", content: text },
+          ]);
+          
+          // Check if agent is asking for image and description for MercadoLibre
+          if (logoGenerated && !waitingForMercadoLibreImage) {
+            const askingForImage = text.toLowerCase().includes("imagen") && 
+                                   (text.toLowerCase().includes("sube") || 
+                                    text.toLowerCase().includes("envía") ||
+                                    text.toLowerCase().includes("comparte") ||
+                                    text.toLowerCase().includes("carga") ||
+                                    text.toLowerCase().includes("subir"));
+            if (askingForImage) {
+              setWaitingForMercadoLibreImage(true);
+            }
           }
         }
+      } else {
+        // Regular webhook: Stream response from n8n
+        const reader = response.body?.getReader();
+        if (!reader) {
+          throw new Error("No se pudo obtener el stream de respuesta");
+        }
+
+        const decoder = new TextDecoder();
+        let assistantContent = "";
+        let textBuffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          textBuffer += decoder.decode(value, { stream: true });
+
+          // Handle different streaming formats from n8n
+          // Format 1: SSE (Server-Sent Events) with "data: " prefix
+          // Format 2: Plain text streaming
+          // Format 3: JSON lines
+
+          let newlineIndex: number;
+          while ((newlineIndex = textBuffer.indexOf("\n")) !== -1) {
+            let line = textBuffer.slice(0, newlineIndex);
+            textBuffer = textBuffer.slice(newlineIndex + 1);
+
+            if (line.endsWith("\r")) line = line.slice(0, -1);
+            if (line.trim() === "") continue;
+
+            // Handle SSE format
+            if (line.startsWith("data: ")) {
+              const data = line.slice(6).trim();
+              if (data === "[DONE]") break;
+              
+              try {
+                const parsed = JSON.parse(data);
+                // Try different possible response formats
+                const content = parsed.content || parsed.text || parsed.message || parsed.data || data;
+                if (typeof content === "string") {
+                  assistantContent += content;
+                  setStreamingContent(assistantContent);
+                }
+              } catch {
+                // If not JSON, treat as plain text
+                assistantContent += data;
+                setStreamingContent(assistantContent);
+              }
+            } 
+            // Handle JSON lines format
+            else if (line.startsWith("{") || line.startsWith("[")) {
+              try {
+                const parsed = JSON.parse(line);
+                const content = parsed.content || parsed.text || parsed.message || parsed.data;
+                if (typeof content === "string") {
+                  assistantContent += content;
+                  setStreamingContent(assistantContent);
+                }
+              } catch {
+                // Invalid JSON, skip
+              }
+            }
+            // Handle plain text streaming
+            else {
+              assistantContent += line;
+              setStreamingContent(assistantContent);
+            }
+          }
+        }
+
+        // Handle any remaining content in buffer
+        if (textBuffer.trim()) {
+          assistantContent += textBuffer;
+          setStreamingContent(assistantContent);
+        }
+
+        // Save assistant message
+        const { data: assistantMsg, error: assistantMsgError } = await supabase
+          .from("messages")
+          .insert({
+            chat_id: chatId,
+            user_id: user!.id,
+            role: "assistant",
+            content: assistantContent,
+          })
+          .select()
+          .single();
+
+        if (assistantMsgError) throw assistantMsgError;
+
+        setMessages((prev) => [
+          ...prev,
+          { id: assistantMsg.id, role: "assistant", content: assistantContent },
+        ]);
+        setStreamingContent("");
       }
-
-      // Handle any remaining content in buffer
-      if (textBuffer.trim()) {
-        assistantContent += textBuffer;
-        setStreamingContent(assistantContent);
-      }
-
-      // Save assistant message
-      const { data: assistantMsg, error: assistantMsgError } = await supabase
-        .from("messages")
-        .insert({
-          chat_id: chatId,
-          user_id: user!.id,
-          role: "assistant",
-          content: assistantContent,
-        })
-        .select()
-        .single();
-
-      if (assistantMsgError) throw assistantMsgError;
-
-      setMessages((prev) => [
-        ...prev,
-        { id: assistantMsg.id, role: "assistant", content: assistantContent },
-      ]);
-      setStreamingContent("");
 
       // Update chat timestamp
       await supabase
@@ -695,9 +1829,13 @@ Puedes usar esta información para desarrollar tu identidad de marca, crear cont
           onSelectChat={(id) => {
             setActiveChat(id);
             setSidebarOpen(false);
+            // Reset logo generated state when switching chats
+            setLogoGenerated(false);
+            setWaitingForMercadoLibreImage(false);
           }}
           onNewChat={handleNewChat}
           onDeleteChat={handleDeleteChat}
+          onUpdateChatTitle={handleUpdateChatTitle}
           isOpen={sidebarOpen}
           onToggle={() => setSidebarOpen(!sidebarOpen)}
         />
@@ -705,7 +1843,7 @@ Puedes usar esta información para desarrollar tu identidad de marca, crear cont
         <main className="flex-1 flex flex-col min-w-0">
           <ChatArea
             messages={messages}
-            isLoading={isLoading}
+            isLoading={isLoading || isGeneratingLogo}
             streamingContent={streamingContent}
             onStartBranding={messages.length === 0 && !brandingComplete ? () => {
               setIsBrandingMode(true);

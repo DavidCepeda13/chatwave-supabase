@@ -15,4 +15,12 @@ export default defineConfig(({ mode }) => ({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  optimizeDeps: {
+    include: ["mixpanel-browser"],
+  },
+  build: {
+    commonjsOptions: {
+      include: [/mixpanel-browser/, /node_modules/],
+    },
+  },
 }));
