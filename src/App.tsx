@@ -7,6 +7,7 @@ import { AuthProvider } from "@/hooks/useAuth";
 import Index from "./pages/Index";
 import Auth from "./pages/Auth";
 import NotFound from "./pages/NotFound";
+import "@/lib/mixpanel"; // Initialize Mixpanel
 
 const queryClient = new QueryClient();
 
