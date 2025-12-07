@@ -380,7 +380,7 @@ export default function Chat() {
       const newData = { ...brandingData };
       
       // Set nested properties
-      let target: any = newData;
+      let target: unknown = newData;
       for (let i = 0; i < currentQuestion.path.length - 1; i++) {
         const key = currentQuestion.path[i];
         if (!target[key]) target[key] = {};
