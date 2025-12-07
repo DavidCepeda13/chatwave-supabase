@@ -1554,6 +1554,9 @@ Al final, pregúntale si quiere seguir con la creación de su imagen principal p
             ]);
           }
 
+          // Wait 10 seconds with loading spinner
+          await new Promise(resolve => setTimeout(resolve, 10000));
+
           // Get image in base64 format
           // Use the processed image if available, otherwise use the original
           let imageBase64 = fileBase64;
